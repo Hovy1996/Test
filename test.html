@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Simulace volného pádu s aerodynamikou</title>
+  <style>
+    :root { --bg:#0b1020; --panel:#121a33; --ink:#e8ecff; --muted:#9fb0ff; --accent:#5ee1a5; }
+    *{box-sizing:border-box;font-family:system-ui,Segoe UI,Roboto,Arial}
+    body{margin:0;background:linear-gradient(180deg,#0a0f25,#0e1633);color:var(--ink)}
+    header{padding:18px 22px;border-bottom:1px solid #1f2a55;background:#0e1633;position:sticky;top:0;z-index:2}
+    header h1{margin:0;font-size:20px}
+    header .sub{color:var(--muted);font-size:13px;margin-top:4px}
+    main{display:grid;grid-template-columns:380px 1fr;gap:18px;max-width:1200px;margin:18px auto;padding:0 18px}
+    @media (max-width:900px){ main{grid-template-columns:1fr} }
+    .card{background:var(--panel);border:1px solid #1c254d;border-radius:16px;box-shadow:0 6px 24px rgba(0,0,0,.25)}
+    .panel{padding:16px}
+    .panel h2{font-size:16px;margin:6px 0 12px;color:#dbe3ff}
+    .row{display:grid;grid-template-columns:140px 1fr 90px;align-items:center;gap:10px;margin:10px 0}
+    .row label{font-size:13px;color:var(--muted)}
+    .row input[type="range"]{width:100%}
+    .row input[type="number"]{width:100%;background:#0f1736;border:1px solid #263370;color:var(--ink);padding:6px 8px;border-radius:10px}
+    .row select{width:100%;background:#0f1736;border:1px solid #263370;color:var(--ink);padding:8px;border-radius:10px}
+    .pill{display:inline-flex;gap:8px;flex-wrap:wrap}
+    .btn{cursor:pointer;background:#1a2450;border:1px solid #2b3a82;color:#eaf1ff;padding:10px 14px;border-radius:12px;font-weight:600}
+    .btn:hover{filter:brightness(1.1)}
+    .btn.alt{background:#11331f;border-color:#1c5c38}
+    .kv{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+    .kv div{background:#0f1736;border:1px solid #203073;border-radius:12px;padding:10px}
+    .kv b{display:block;font-size:12px;color:var(--muted);margin-bottom:2px}
+    canvas{background:#081026;border-bottom-left-radius:16px;border-bottom-right-radius:16px}
+    .meta{font-size:12px;color:var(--muted)}
+    .flex{display:flex;gap:8px;flex-wrap:wrap}
+    .warn{font-size:12px;color:#ffd28f;margin-top:8px}
+    .footer{padding:10px 16px;border-top:1px solid #1c254d;color:#a7b6ff;font-size:12px}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Volný pád s odporem vzduchu</h1>
+    <div class="sub">Model: <code>m·dv/dt = m·g − ½·ρ·C<sub>d</sub>·A·v|v|</code> (směr odporu proti pohybu).</div>
+  </header>
+
+  <main>
+    <!-- OVLÁDACÍ PANEL -->
+    <section class="card panel" id="controls">
+      <h2>Nastavení</h2>
+
+      <div class="row">
+        <label for="shape">Tvar tělesa</label>
+        <select id="shape">
+          <option value="sphere">Koule (Cd≈0.47)</option>
+          <option value="cube">Krychle – čelem vpřed (Cd≈1.05)</option>
+          <option value="disk">Plochý disk – čelem dolů (Cd≈1.17)</option>
+          <option value="teardrop">Proudnicové těleso (Cd≈0.05)</option>
+          <option value="custom">Vlastní (Cd a plocha ručně)</option>
+        </select>
+        <span class="meta" id="shapeMeta">C<sub>d</sub> a plocha z rozměru</span>
+      </div>
+
+      <div class="row" id="sizeRow">
+        <label id="sizeLabel" for="size">Rozměr (průměr/strana) [cm]</label>
+        <input id="size" type="range" min="2" max="100" step="1" value="20">
+        <input id="sizeNum" type="number" min="2" max="100" step="1" value="20">
+      </div>
+
+      <div class="row" id="areaRow" style="display:none">
+        <label for="area">Čelní plocha A [m²]</label>
+        <input id="area" type="range" min="0.0005" max="0.2" step="0.0005" value="0.0314">
+        <input id="areaNum" type="number" min="0.0005" max="0.2" step="0.0005" value="0.0314">
+      </div>
+
+      <div class="row" id="cdRow" style="display:none">
+        <label for="cd">Součinitel odporu C<sub>d</sub></label>
+        <input id="cd" type="range" min="0.02" max="1.6" step="0.01" value="0.47">
+        <input id="cdNum" type="number" min="0.02" max="1.6" step="0.01" value="0.47">
+      </div>
+
+      <div class="row">
+        <label for="mass">Hmotnost m [kg]</label>
+        <input id="mass" type="range" min="0.05" max="50" step="0.05" value="1.0">
+        <input id="massNum" type="number" min="0.05" max="50" step="0.05" value="1.0">
+      </div>
+
+      <div class="row">
+        <label for="rho">Hustota vzduchu ρ [kg/m³]</label>
+        <input id="rho" type="range" min="0.5" max="1.4" step="0.005" value="1.225">
+        <input id="rhoNum" type="number" min="0.5" max="1.4" step="0.005" value="1.225">
+      </div>
+
+      <div class="row">
+        <label for="g">Gravitace g [m/s²]</label>
+        <input id="g" type="range" min="1" max="12" step="0.01" value="9.81">
+        <input id="gNum" type="number" min="1" max="12" step="0.01" value="9.81">
+      </div>
+
+      <div class="row">
+        <label for="h0">Výška startu [m]</label>
+        <input id="h0" type="range" min="5" max="200" step="1" value="80">
+        <input id="h0Num" type="number" min="5" max="200" step="1" value="80">
+      </div>
+
+      <div class="row">
+        <label for="timescale">Rychlost simulace</label>
+        <input id="timescale" type="range" min="0.25" max="4" step="0.25" value="1">
+        <span id="timescaleVal" class="meta">1×</span>
+      </div>
+
+      <div class="flex" style="margin-top:12px">
+        <button class="btn alt" id="startBtn">Start</button>
+        <button class="btn" id="pauseBtn">Pauza</button>
+        <button class="btn" id="resetBtn">Reset</button>
+      </div>
+
+      <div class="kv">
+        <div><b>Terminal v<sub>t</sub></b><span id="vt">–</span> m/s</div>
+        <div><b>Čelní plocha A</b><span id="Aout">–</span> m²</div>
+        <div><b>C<sub>d</sub></b><span id="Cdout">–</span></div>
+        <div><b>Skutečná v</b><span id="vout">0.00</span> m/s</div>
+      </div>
+
+      <p class="warn">Pozn.: Model je 1D (jen svislý směr), odpor ~ v²; směr odporu je vždy proti pohybu. Vhodné pro výuku – ne pro balistické tabulky 😄</p>
+    </section>
+
+    <!-- VIZUALIZACE + GRAF -->
+    <section class="card" style="display:flex;flex-direction:column">
+      <div class="panel" style="border-bottom:1px solid #1c254d">
+        <h2>Vizualizace</h2>
+        <div class="meta">Měřítko: 1 m ≈ 4 px • Zelená čára = zem</div>
+      </div>
+      <canvas id="scene" width="720" height="420"></canvas>
+      <div class="footer">
+        <div style="display:flex;align-items:center;gap:10px;justify-content:space-between;flex-wrap:wrap">
+          <div>Graf v(t)</div>
+          <div class="meta">Šedá = průběh rychlosti, tečkovaně = v<sub>t</sub></div>
+        </div>
+      </div>
+      <canvas id="chart" width="720" height="160"></canvas>
+    </section>
+  </main>
+
+  <script>
+    // ----- Uživatelské prvky -----
+    const $ = id => document.getElementById(id);
+    const ui = {
+      shape: $('shape'), shapeMeta: $('shapeMeta'),
+      size: $('size'), sizeNum: $('sizeNum'), sizeRow: $('sizeRow'), sizeLabel: $('sizeLabel'),
+      area: $('area'), areaNum: $('areaNum'), areaRow: $('areaRow'),
+      cd: $('cd'), cdNum: $('cdNum'), cdRow: $('cdRow'),
+      mass: $('mass'), massNum: $('massNum'),
+      rho: $('rho'), rhoNum: $('rhoNum'),
+      g: $('g'), gNum: $('gNum'),
+      h0: $('h0'), h0Num: $('h0Num'),
+      timescale: $('timescale'), timescaleVal: $('timescaleVal'),
+      startBtn: $('startBtn'), pauseBtn: $('pauseBtn'), resetBtn: $('resetBtn'),
+      vt: $('vt'), Aout: $('Aout'), Cdout: $('Cdout'), vout: $('vout'),
+      scene: $('scene'), chart: $('chart')
+    };
+
+    // ----- Parametry tvarů -----
+    const SHAPES = {
+      sphere:  { name:'Koule',      cd:0.47, areaFromSize:(d)=>Math.PI*(d**2)/4, sizeLabel:'Průměr [cm]' },
+      cube:    { name:'Krychle',    cd:1.05, areaFromSize:(a)=> (a**2),          sizeLabel:'Strana [cm]' },
+      disk:    { name:'Plochý disk',cd:1.17, areaFromSize:(d)=>Math.PI*(d**2)/4, sizeLabel:'Průměr [cm]' },
+      teardrop:{ name:'Proudnicové',cd:0.05, areaFromSize:(d)=>Math.PI*(d**2)/4, sizeLabel:'Průměr [cm]' }
+    };
+
+    // ----- Stav simulace -----
+    let state = {
+      m: 1.0, rho: 1.225, g: 9.81,
+      A: 0.0314, Cd: 0.47,
+      y: 0, v: 0, t: 0,
+      h0: 80, running:false, timescale:1,
+      vt: null, points: []
+    };
+
+    // Plátna
+    const ctx = ui.scene.getContext('2d');
+    const gtx = ui.chart.getContext('2d');
+    const pxPerM = 4; // měřítko
+    const groundY = ui.scene.height - 28;
+
+    function clamp(v,min,max){ return Math.max(min, Math.min(max,v)); }
+
+    function updateDerived(){
+      // Terminální rychlost (pro Cd*A > 0)
+      if(state.Cd>0 && state.A>0 && state.rho>0){
+        state.vt = Math.sqrt((2*state.m*state.g)/(state.rho*state.Cd*state.A));
+      }else{
+        state.vt = Infinity;
+      }
+      ui.vt.textContent = isFinite(state.vt) ? state.vt.toFixed(2) : '∞';
+      ui.Aout.textContent  = state.A.toFixed(4);
+      ui.Cdout.textContent = state.Cd.toFixed(2);
+    }
+
+    function setShapeUI(){
+      const key = ui.shape.value;
+      if(key === 'custom'){
+        ui.sizeRow.style.display='none';
+        ui.areaRow.style.display='';
+        ui.cdRow.style.display='';
+        ui.shapeMeta.textContent = 'Nastav C_d a plochu A ručně';
+      }else{
+        ui.sizeRow.style.display='';
+        ui.areaRow.style.display='none';
+        ui.cdRow.style.display='none';
+        const S = SHAPES[key];
+        ui.sizeLabel.textContent = S.sizeLabel;
+        ui.shapeMeta.innerHTML = `C<sub>d</sub>≈${S.cd} &nbsp;•&nbsp; A z rozměru`;
+        // přepočet A a Cd ze současného rozměru
+        const size_m = parseFloat(ui.size.value)/100; // cm → m
+        state.A  = S.areaFromSize(size_m);
+        state.Cd = S.cd;
+        updateSlaves();
+      }
+      updateDerived();
+      drawAll();
+    }
+
+    function updateSlaves(){
+      // propojení range↔number
+      ui.sizeNum.value = ui.size.value;
+      ui.massNum.value = ui.mass.value;
+      ui.rhoNum.value  = ui.rho.value;
+      ui.gNum.value    = ui.g.value;
+      ui.h0Num.value   = ui.h0.value;
+      ui.areaNum.value = ui.area.value;
+      ui.cdNum.value   = ui.cd.value;
+      ui.timescaleVal.textContent = `${parseFloat(ui.timescale.value).toFixed(2)}×`;
+    }
+
+    // ----- Ovládání vstupů -----
+    function bindPair(range, num, onChange){
+      const f = ()=>{
+        onChange(parseFloat(range.value));
+        num.value = range.value;
+      };
+      const g = ()=>{
+        range.value = num.value;
+        onChange(parseFloat(num.value));
+      };
+      range.addEventListener('input', f);
+      num.addEventListener('input', g);
+    }
+
+    bindPair(ui.size, ui.sizeNum, (v)=>{
+      const key = ui.shape.value;
+      if(key !== 'custom'){
+        const S = SHAPES[key];
+        const size_m = v/100;
+        state.A  = S.areaFromSize(size_m);
+        state.Cd = S.cd;
+        updateDerived(); drawAll();
+      }
+    });
+
+    bindPair(ui.area, ui.areaNum, (v)=>{ if(ui.shape.value==='custom'){ state.A=v; updateDerived(); drawAll(); } });
+    bindPair(ui.cd, ui.cdNum, (v)=>{ if(ui.shape.value==='custom'){ state.Cd=v; updateDerived(); } });
+    bindPair(ui.mass, ui.massNum, (v)=>{ state.m=v; updateDerived(); });
+    bindPair(ui.rho,  ui.rhoNum,  (v)=>{ state.rho=v; updateDerived(); });
+    bindPair(ui.g,    ui.gNum,    (v)=>{ state.g=v; updateDerived(); });
+    bindPair(ui.h0,   ui.h0Num,   (v)=>{ state.h0=v; drawAll(); });
+    ui.timescale.addEventListener('input', ()=>{ state.timescale=parseFloat(ui.timescale.value); updateSlaves(); });
+
+    ui.shape.addEventListener('change', setShapeUI);
+
+    // ----- Tlačítka -----
+    ui.startBtn.addEventListener('click', ()=>{ if(!state.running){ start(); } });
+    ui.pauseBtn.addEventListener('click', ()=>{ state.running = !state.running; ui.pauseBtn.textContent = state.running ? 'Pauza' : 'Pokračovat'; if(state.running) last = performance.now(), raf(); });
+    ui.resetBtn.addEventListener('click', reset);
+
+    // ----- Simulace -----
+    function reset(){
+      state.y = 0;                 // 0 = výška startu, roste směrem dolů
+      state.v = 0;
+      state.t = 0;
+      state.points = [];
+      state.running = false;
+      ui.pauseBtn.textContent = 'Pauza';
+      drawAll();
+    }
+
+    function start(){ reset(); state.running = true; last = performance.now(); raf(); }
+
+    // RK4 pro v a y (kvůli stabilitě)
+    function deriv(v){ // zrychlení a(v)
+      const drag = 0.5*state.rho*state.Cd*state.A*v*Math.abs(v); // >= 0
+      return state.g - drag/state.m; // směr + dolů
+    }
+
+    let last = 0;
+    function raf(now){
+      if(!state.running) return;
+      const dtReal = (now - last)/1000;
+      last = now;
+      let dt = clamp(dtReal*state.timescale, 0, 0.05); // bezpečný krok
+      stepRK4(dt);
+      if( state.y >= state.h0 ){ // dopad
+        state.y = state.h0;
+        state.running = false;
+      }
+      drawAll();
+      requestAnimationFrame(raf);
+    }
+
+    function stepRK4(dt){
+      // Integrace v a y (y' = v; v' = a(v))
+      let v1 = state.v;
+      let a1 = deriv(v1);
+      let v2 = state.v + 0.5*a1*dt;
+      let a2 = deriv(v2);
+      let v3 = state.v + 0.5*a2*dt;
+      let a3 = deriv(v3);
+      let v4 = state.v + a3*dt;
+      let a4 = deriv(v4);
+
+      const dv = (a1 + 2*a2 + 2*a3 + a4)/6 * dt;
+      const vMid = state.v + 0.5*dv; // pro poloviční rychlost na posun
+      state.v += dv;
+      state.y += vMid * dt;
+      state.t += dt;
+
+      ui.vout.textContent = state.v.toFixed(2);
+      // záznam do grafu
+      state.points.push({t: state.t, v: state.v});
+      if(state.points.length>3000) state.points.shift();
+    }
+
+    // ----- Kreslení -----
+    function drawAll(){ drawScene(); drawChart(); }
+
+    function drawScene(){
+      const w = ui.scene.width, h = ui.scene.height;
+      ctx.clearRect(0,0,w,h);
+
+      // pozadí
+      const grad = ctx.createLinearGradient(0,0,0,h);
+      grad.addColorStop(0,'#0a132e'); grad.addColorStop(1,'#060b1d');
+      ctx.fillStyle = grad; ctx.fillRect(0,0,w,h);
+
+      // zem
+      ctx.strokeStyle = '#5ee1a5'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(0, groundY); ctx.lineTo(w, groundY); ctx.stroke();
+
+      // měřítko výšky
+      ctx.strokeStyle = 'rgba(255,255,255,.12)'; ctx.lineWidth = 1;
+      for(let m=0; m<=state.h0; m+=10){
+        const y = groundY - m*pxPerM;
+        ctx.beginPath(); ctx.moveTo(20,y); ctx.lineTo(w-20,y); ctx.stroke();
+      }
+
+      // objekt
+      const x = w*0.5, y = groundY - state.y*pxPerM;
+      ctx.save();
+      ctx.translate(x,y);
+
+      // stín
+      const sh = ctx.createRadialGradient(0,0,5,0,0,30);
+      sh.addColorStop(0,'rgba(94,225,165,.35)');
+      sh.addColorStop(1,'rgba(94,225,165,0)');
+      ctx.fillStyle = sh; ctx.beginPath(); ctx.arc(0,0,30,0,Math.PI*2); ctx.fill();
+
+      // tvar
+      ctx.fillStyle = '#cfe9ff'; ctx.strokeStyle='#7fbfff'; ctx.lineWidth=2;
+      const key = ui.shape.value;
+      if(key==='sphere'){
+        drawCircle(0,0,18);
+      }else if(key==='cube'){
+        drawRect(-18,-18,36,36);
+      }else if(key==='disk'){
+        drawCircle(0,0,20); // vizuálně trochu větší
+      }else if(key==='teardrop'){
+        drawTeardrop();
+      }else{ // custom -> kruh
+        drawCircle(0,0,18);
+      }
+
+      // šipky sil
+      // tíha
+      drawArrow(0,26, 0, 46, '#ffd07a');
+      // odpor (proti směru v)
+      const s = clamp(Math.abs(state.v)/(state.vt||50), 0, 1);
+      const dragLen = 20 + 40*s;
+      drawArrow(0,-26, 0, -26 - Math.sign(state.v||1)*dragLen, '#ff9db1');
+
+      ctx.restore();
+
+      // popisky
+      ctx.fillStyle = '#aecdff'; ctx.font='12px system-ui';
+      ctx.fillText(`t = ${state.t.toFixed(2)} s`, 20, 24);
+      ctx.fillText(`v = ${state.v.toFixed(2)} m/s`, 20, 40);
+      ctx.fillText(`y = ${state.y.toFixed(2)} m`, 20, 56);
+    }
+
+    function drawCircle(cx,cy,r){
+      ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
+      ctx.fill(); ctx.stroke();
+    }
+    function drawRect(x,y,w,h){ ctx.beginPath(); ctx.rect(x,y,w,h); ctx.fill(); ctx.stroke(); }
+    function drawTeardrop(){
+      ctx.beginPath();
+      ctx.moveTo(-18,0);
+      ctx.quadraticCurveTo(-10,-14,0,-22);
+      ctx.quadraticCurveTo(10,-14,18,0);
+      ctx.quadraticCurveTo(10,14,0,22);
+      ctx.quadraticCurveTo(-10,14,-18,0);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
+    function drawArrow(x1,y1,x2,y2,color='#fff'){
+      ctx.strokeStyle=color; ctx.fillStyle=color; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+      const ang = Math.atan2(y2-y1,x2-x1);
+      const ah = 7;
+      ctx.beginPath();
+      ctx.moveTo(x2,y2);
+      ctx.lineTo(x2 - ah*Math.cos(ang - Math.PI/6), y2 - ah*Math.sin(ang - Math.PI/6));
+      ctx.lineTo(x2 - ah*Math.cos(ang + Math.PI/6), y2 - ah*Math.sin(ang + Math.PI/6));
+      ctx.closePath(); ctx.fill();
+    }
+
+    function drawChart(){
+      const w = ui.chart.width, h = ui.chart.height;
+      gtx.clearRect(0,0,w,h);
+      // osy
+      gtx.fillStyle = '#9fb0ff';
+      gtx.font = '12px system-ui';
+      gtx.fillText('rychlost [m/s]', 10, 16);
+
+      // vt linka
+      if(isFinite(state.vt)){
+        gtx.setLineDash([6,6]); gtx.strokeStyle='rgba(200,200,200,.5)'; gtx.lineWidth=1;
+        const yvt = mapV(state.vt, h);
+        gtx.beginPath(); gtx.moveTo(0,yvt); gtx.lineTo(w,yvt); gtx.stroke();
+        gtx.setLineDash([]);
+      }
+
+      // průběh
+      const span = 12; // s viditelného okna
+      const tMax = state.t;
+      const tMin = Math.max(0, tMax - span);
+
+      const pts = state.points.filter(p => p.t>=tMin);
+      if(pts.length<2) return;
+
+      gtx.strokeStyle = 'rgba(230,230,240,.9)'; gtx.lineWidth=2;
+      gtx.beginPath();
+      for(let i=0;i<pts.length;i++){
+        const p = pts[i];
+        const x = ( (p.t - tMin) / (span) ) * (w-40) + 20;
+        const y = mapV(Math.abs(p.v), h); // kreslíme |v|
+        if(i===0) gtx.moveTo(x,y); else gtx.lineTo(x,y);
+      }
+      gtx.stroke();
+    }
+
+    function mapV(v, h){
+      // mapujeme 0..vTop → h-18 .. 18 (|v| graf)
+      const vTop = Math.max(10, (isFinite(state.vt) ? state.vt*1.2 : Math.max(20, Math.abs(state.v)*1.2)));
+      const y = (1 - clamp(v/vTop,0,1))*(h-36) + 18;
+      return y;
+    }
+
+    // ----- Inicializace -----
+    function initFromUI(){
+      state.m   = parseFloat(ui.mass.value);
+      state.rho = parseFloat(ui.rho.value);
+      state.g   = parseFloat(ui.g.value);
+      state.h0  = parseFloat(ui.h0.value);
+      state.timescale = parseFloat(ui.timescale.value);
+
+      if(ui.shape.value==='custom'){
+        state.A  = parseFloat(ui.area.value);
+        state.Cd = parseFloat(ui.cd.value);
+      }else{
+        const S = SHAPES[ui.shape.value];
+        const size_m = parseFloat(ui.size.value)/100;
+        state.A  = S.areaFromSize(size_m);
+        state.Cd = S.cd;
+      }
+      updateSlaves();
+      updateDerived();
+      reset();
+    }
+
+    setShapeUI();
+    initFromUI();
+    drawAll();
+  </script>
+</body>
+</html>
